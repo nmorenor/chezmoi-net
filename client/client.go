@@ -25,8 +25,6 @@ import (
 )
 
 const (
-	PRIVATE       = 1
-	SESSION       = 2
 	SESSION_JOIN  = 3
 	SESSION_LEAVE = 4
 	SESSION_END   = 5
