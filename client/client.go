@@ -56,6 +56,7 @@ type Client struct {
 	servicesInEvents        map[string]*signals.Signal[[]byte]
 	servicesOutEvents       map[string]*signals.Signal[[]byte]
 	outEvents               map[string]*signals.Signal[[]byte]
+	terminate               *signals.Signal[string]
 	OnConnect               func()
 	sessionManagerRpcClient *rpc.Client
 	hubRpcClient            *rpc.Client
@@ -89,6 +90,7 @@ func NewClient(socket gowebsocket.Socket) *Client {
 		inconns:           make(map[string]*net.Conn),
 		Services:          make(map[string]*rpc.Client),
 		sessionChanged:    ptr(signals.New[SessionChangeEvent]()),
+		terminate:         ptr(signals.New[string]()),
 		pingTimer:         time.NewTimer(30 * time.Second),
 	}
 	wsClient.ws.OnConnected = wsClient.OnConnected
@@ -109,9 +111,9 @@ func (client *Client) OnConnectError(err error, socket gowebsocket.Socket) {
 }
 
 func (client *Client) OnConnected(socket gowebsocket.Socket) {
-	netConn := cnet.NetConn(&client.ctx, client.mutex, *client.mainEvents["SessionManager"], nil, client.ws.Conn)  // outgoing
-	hubnetConn := cnet.NetConn(&client.ctx, client.mutex, *client.mainEvents["Hub"], nil, client.ws.Conn)          // outgoing
-	incommingNetConn := cnet.NetConn(&client.ctx, client.mutex, *client.mainEvents["Client"], nil, client.ws.Conn) // incomming
+	netConn := cnet.NetConn(&client.ctx, client.mutex, *client.mainEvents["SessionManager"], nil, client.terminate, client.ws.Conn)  // outgoing
+	hubnetConn := cnet.NetConn(&client.ctx, client.mutex, *client.mainEvents["Hub"], nil, client.terminate, client.ws.Conn)          // outgoing
+	incommingNetConn := cnet.NetConn(&client.ctx, client.mutex, *client.mainEvents["Client"], nil, client.terminate, client.ws.Conn) // incomming
 	client.netCon = &netConn
 	client.incommingCon = &incommingNetConn
 	client.hubConn = &hubnetConn
@@ -203,11 +205,16 @@ func (client *Client) Connect() {
 }
 
 func (client *Client) Close() {
+	client.clean()
 	go client.ws.Close()
 }
 
 func (client *Client) clean() {
 	fmt.Println("cleaning")
+	if client.terminate != nil {
+		(*client.terminate).Emit(client.ctx, cnet.KILL)
+		(*client.terminate).RemoveListener(cnet.KILL)
+	}
 	client.pingTimer.Stop()
 	for outevt := range client.outEvents {
 		(*client.outEvents[outevt]).RemoveListener(outevt)
@@ -344,8 +351,8 @@ func RegisterService[T any](rcvr *T, client *Client, targetProvider func() *stri
 	client.outEvents[sname] = ptr(signals.New[[]byte]())
 	client.servicesInEvents[sname] = ptr(signals.New[[]byte]())
 	client.servicesOutEvents[sname] = ptr(signals.New[[]byte]())
-	conn := cnet.NetConn(&client.ctx, client.mutex, *client.events[sname], client.outEvents[sname], nil)
-	inconn := cnet.NetConn(&client.ctx, client.mutex, *client.servicesInEvents[sname], client.servicesOutEvents[sname], nil)
+	conn := cnet.NetConn(&client.ctx, client.mutex, *client.events[sname], client.outEvents[sname], client.terminate, nil)
+	inconn := cnet.NetConn(&client.ctx, client.mutex, *client.servicesInEvents[sname], client.servicesOutEvents[sname], client.terminate, nil)
 	client.conns[sname] = &conn
 	client.inconns[sname] = &inconn
 	rpc.Register(rcvr)

@@ -15,12 +15,17 @@ import (
 	"github.com/maniartech/signals"
 )
 
-func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], c *websocket.Conn) net.Conn {
+const (
+	KILL = "kill"
+)
+
+func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c *websocket.Conn) net.Conn {
 	nc := &netConn{
 		c:         c,
 		ctx:       ctx,
 		mutex:     mutex,
 		outEvt:    outEvent,
+		terminate: terminateSignal,
 		inEvt:     &event,
 		Incomming: make(chan []byte),
 		cleanKey:  uuid.Must(uuid.NewRandom()).String(),
@@ -41,6 +46,14 @@ func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byt
 		}(b)
 	}, nc.cleanKey)
 
+	if terminateSignal != nil {
+		(*terminateSignal).AddListener(func(ctx context.Context, s string) {
+			go func() {
+				nc.Incomming <- []byte(KILL)
+			}()
+		}, KILL)
+	}
+
 	return nc
 }
 
@@ -48,6 +61,7 @@ type netConn struct {
 	c         *websocket.Conn
 	outEvt    *signals.Signal[[]byte]
 	inEvt     *signals.Signal[[]byte]
+	terminate *signals.Signal[string]
 	ctx       *context.Context
 	mutex     *sync.Mutex
 	Incomming chan []byte
@@ -98,6 +112,9 @@ func (c *netConn) Read(p []byte) (int, error) {
 
 	if c.reader == nil {
 		r := <-c.Incomming
+		if string(r) == KILL {
+			return 0, fmt.Errorf("Terminated")
+		}
 		c.reader = bytes.NewReader(r)
 	}
 	n, err := c.reader.Read(p)

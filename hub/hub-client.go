@@ -34,15 +34,16 @@ type Client struct {
 
 	Socket    *Socket
 	Events    map[string]*signals.Signal[[]byte]
+	terminate *signals.Signal[string]
 	rpcClient *rpc.Client
 	ctx       *context.Context
 	Ready     bool
 }
 
 func (c *Client) startJsonRPC() {
-	sessionManagerConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["SessionManager"], nil, c.Socket.Conn)
-	hubConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["Hub"], nil, c.Socket.Conn)
-	clientCon := cnet.NetConn(c.ctx, c.mutex, *c.Events["Client"], nil, c.Socket.Conn)
+	sessionManagerConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["SessionManager"], nil, c.terminate, c.Socket.Conn)
+	hubConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["Hub"], nil, c.terminate, c.Socket.Conn)
+	clientCon := cnet.NetConn(c.ctx, c.mutex, *c.Events["Client"], nil, c.terminate, c.Socket.Conn)
 	c.rpcClient = jsonrpc.NewClient(clientCon) // jsonrpc2 client
 	c.Hub.Register <- c
 	go jsonrpc.ServeConn(sessionManagerConn) // jsonrpc2 server
@@ -65,13 +66,14 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	clientId := uuid.Must(uuid.NewRandom()).String()
 	client := &Client{
-		Hub:    hub,
-		Socket: &socket,
-		Events: make(map[string]*signals.Signal[[]byte]),
-		Id:     clientId,
-		Ready:  false,
-		ctx:    &ctx,
-		mutex:  sendMu,
+		Hub:       hub,
+		Socket:    &socket,
+		Events:    make(map[string]*signals.Signal[[]byte]),
+		terminate: ptr(signals.New[string]()),
+		Id:        clientId,
+		Ready:     false,
+		ctx:       &ctx,
+		mutex:     sendMu,
 	}
 	client.Events["SessionManager"] = ptr(signals.New[[]byte]())
 	client.Events["Hub"] = ptr(signals.New[[]byte]())
@@ -124,4 +126,11 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	client.Socket.Connect()
 
 	go client.startJsonRPC()
+}
+
+func (c *Client) Close() {
+	if c.terminate != nil {
+		(*c.terminate).Emit(*c.ctx, cnet.KILL)
+		(*c.terminate).RemoveListener(cnet.KILL)
+	}
 }
