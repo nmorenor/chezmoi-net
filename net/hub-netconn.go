@@ -21,14 +21,15 @@ const (
 
 func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c *websocket.Conn) net.Conn {
 	nc := &netConn{
-		c:         c,
-		ctx:       ctx,
-		mutex:     mutex,
-		outEvt:    outEvent,
-		terminate: terminateSignal,
-		inEvt:     &event,
-		Incomming: make(chan []byte),
-		cleanKey:  uuid.Must(uuid.NewRandom()).String(),
+		c:          c,
+		ctx:        ctx,
+		mutex:      mutex,
+		outEvt:     outEvent,
+		terminate:  terminateSignal,
+		terminated: false,
+		inEvt:      &event,
+		Incomming:  make(chan []byte),
+		cleanKey:   uuid.Must(uuid.NewRandom()).String(),
 	}
 
 	var cancel context.CancelFunc
@@ -41,16 +42,16 @@ func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byt
 	nc.readTimer.Stop()
 
 	event.AddListener(func(ctx context.Context, b []byte) {
-		go func(data []byte) {
-			nc.Incomming <- data
-		}(b)
+		nc.mutex.Lock()
+		defer nc.mutex.Unlock()
+		nc.Incomming <- b
 	}, nc.cleanKey)
 
 	if terminateSignal != nil {
 		(*terminateSignal).AddListener(func(ctx context.Context, s string) {
-			go func() {
-				nc.Incomming <- []byte(KILL)
-			}()
+			nc.mutex.Lock()
+			defer nc.mutex.Unlock()
+			nc.Incomming <- []byte(KILL)
 		}, KILL)
 	}
 
@@ -58,14 +59,15 @@ func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byt
 }
 
 type netConn struct {
-	c         *websocket.Conn
-	outEvt    *signals.Signal[[]byte]
-	inEvt     *signals.Signal[[]byte]
-	terminate *signals.Signal[string]
-	ctx       *context.Context
-	mutex     *sync.Mutex
-	Incomming chan []byte
-	cleanKey  string
+	c          *websocket.Conn
+	outEvt     *signals.Signal[[]byte]
+	inEvt      *signals.Signal[[]byte]
+	terminate  *signals.Signal[string]
+	ctx        *context.Context
+	mutex      *sync.Mutex
+	terminated bool
+	Incomming  chan []byte
+	cleanKey   string
 
 	writeTimer   *time.Timer
 	writeContext context.Context
@@ -109,10 +111,13 @@ func (c *netConn) Write(p []byte) (int, error) {
 }
 
 func (c *netConn) Read(p []byte) (int, error) {
-
+	if c.terminated {
+		return 0, fmt.Errorf("Terminated")
+	}
 	if c.reader == nil {
 		r := <-c.Incomming
 		if string(r) == KILL {
+			c.terminated = true
 			return 0, fmt.Errorf("Terminated")
 		}
 		c.reader = bytes.NewReader(r)

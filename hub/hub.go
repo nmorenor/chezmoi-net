@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/rpc"
+	"sync"
 )
 
 // Hub maintains the set of active clients and broadcasts messages to the
@@ -19,6 +20,7 @@ type Hub struct {
 
 	// Unregister requests from clients.
 	Unregister chan *Client
+	mutex      *sync.Mutex
 }
 
 func NewHub() *Hub {
@@ -27,6 +29,7 @@ func NewHub() *Hub {
 		Unregister: make(chan *Client),
 		Clients:    make(map[*Client]bool),
 		IdClients:  make(map[string]*Client),
+		mutex:      &sync.Mutex{},
 	}
 	NewSessionManager(hub)
 	return hub
@@ -86,30 +89,38 @@ func (h *Hub) Run() {
 	for {
 		select {
 		case client := <-h.Register:
-			h.Clients[client] = true
-			h.IdClients[client.Id] = client
-			// send client id back to client
-			go func() {
-				var status string
-				client.rpcClient.Call("Client.Registered", &RegisteredMessage{Id: client.Id}, &status)
+			func() {
+				h.mutex.Lock()
+				defer h.mutex.Unlock()
+				h.Clients[client] = true
+				h.IdClients[client.Id] = client
+				// send client id back to client
+				go func() {
+					var status string
+					client.rpcClient.Call("Client.Registered", &RegisteredMessage{Id: client.Id}, &status)
+				}()
 			}()
 		case client := <-h.Unregister:
-			if _, ok := h.Clients[client]; ok {
-				if client.Session != nil && h.SessionManager.Sessions[*client.Session] != nil {
-					sess := h.SessionManager.Sessions[*client.Session]
-					h.SessionManager.LeaveSession(client.Id, *client.Session)
-					if h.SessionManager.Sessions[*client.Session].Host == client {
-						delete(h.SessionManager.Sessions, sess.Id)
-						for next := range sess.Participants {
-							// TODO send close session message before closing
-							next.Socket.Conn.Close()
+			func() {
+				h.mutex.Lock()
+				defer h.mutex.Unlock()
+				if _, ok := h.Clients[client]; ok {
+					if client.Session != nil && h.SessionManager.Sessions[*client.Session] != nil {
+						sess := h.SessionManager.Sessions[*client.Session]
+						h.SessionManager.LeaveSession(client.Id, *client.Session)
+						if h.SessionManager.Sessions[*client.Session].Host == client {
+							delete(h.SessionManager.Sessions, sess.Id)
+							for next := range sess.Participants {
+								// TODO send close session message before closing
+								next.Socket.Conn.Close()
+							}
 						}
 					}
+					client.Close() // terminate any json rpc serve
+					delete(h.Clients, client)
+					delete(h.IdClients, client.Id)
 				}
-				client.Close() // terminate any json rpc serve
-				delete(h.Clients, client)
-				delete(h.IdClients, client.Id)
-			}
+			}()
 		}
 	}
 }
