@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/maniartech/signals"
+	"github.com/mborders/artifex"
 	cnet "github.com/nmorenor/chezmoi-net/net"
 	"github.com/sacOO7/gowebsocket"
 
@@ -66,32 +67,36 @@ type Client struct {
 	Services                map[string]*rpc.Client
 	sessionChanged          *signals.Signal[SessionChangeEvent]
 	pingTimer               *time.Timer
+	outgoingDispatcher      *artifex.Dispatcher
+	incommingDispatcher     *artifex.Dispatcher
 }
 
 var IncommingMessage = signals.New[[]byte]()
 
 func NewClient(socket gowebsocket.Socket) *Client {
 	wsClient := Client{
-		Id:                nil,
-		ws:                &socket,
-		netCon:            nil,
-		Interrupt:         make(chan int),
-		ready:             make(chan bool),
-		ctx:               context.Background(),
-		incommingCon:      nil,
-		hubConn:           nil,
-		events:            make(map[string]*signals.Signal[[]byte]),
-		mainEvents:        make(map[string]*signals.Signal[[]byte]),
-		servicesInEvents:  make(map[string]*signals.Signal[[]byte]),
-		servicesOutEvents: make(map[string]*signals.Signal[[]byte]),
-		outEvents:         make(map[string]*signals.Signal[[]byte]),
-		mutex:             &sync.Mutex{},
-		conns:             make(map[string]*net.Conn),
-		inconns:           make(map[string]*net.Conn),
-		Services:          make(map[string]*rpc.Client),
-		sessionChanged:    ptr(signals.New[SessionChangeEvent]()),
-		terminate:         ptr(signals.New[string]()),
-		pingTimer:         time.NewTimer(30 * time.Second),
+		Id:                  nil,
+		ws:                  &socket,
+		netCon:              nil,
+		Interrupt:           make(chan int),
+		ready:               make(chan bool),
+		ctx:                 context.Background(),
+		incommingCon:        nil,
+		hubConn:             nil,
+		events:              make(map[string]*signals.Signal[[]byte]),
+		mainEvents:          make(map[string]*signals.Signal[[]byte]),
+		servicesInEvents:    make(map[string]*signals.Signal[[]byte]),
+		servicesOutEvents:   make(map[string]*signals.Signal[[]byte]),
+		outEvents:           make(map[string]*signals.Signal[[]byte]),
+		mutex:               &sync.Mutex{},
+		conns:               make(map[string]*net.Conn),
+		inconns:             make(map[string]*net.Conn),
+		Services:            make(map[string]*rpc.Client),
+		sessionChanged:      ptr(signals.New[SessionChangeEvent]()),
+		terminate:           ptr(signals.New[string]()),
+		pingTimer:           time.NewTimer(30 * time.Second),
+		outgoingDispatcher:  artifex.NewDispatcher(10, 100),
+		incommingDispatcher: artifex.NewDispatcher(10, 100),
 	}
 	wsClient.ws.OnConnected = wsClient.OnConnected
 	wsClient.ws.OnConnectError = wsClient.OnConnectError
@@ -102,6 +107,8 @@ func NewClient(socket gowebsocket.Socket) *Client {
 	wsClient.mainEvents["Client"] = ptr(signals.New[[]byte]())
 	wsClient.mainEvents["Hub"] = ptr(signals.New[[]byte]())
 	rpc.Register(&wsClient)
+	wsClient.outgoingDispatcher.Start()
+	wsClient.incommingDispatcher.Start()
 	return &wsClient
 }
 
@@ -211,6 +218,12 @@ func (client *Client) Close() {
 
 func (client *Client) clean() {
 	fmt.Println("cleaning")
+	if client.outgoingDispatcher != nil {
+		client.outgoingDispatcher.Stop()
+	}
+	if client.incommingDispatcher != nil {
+		client.incommingDispatcher.Stop()
+	}
 	if client.terminate != nil {
 		(*client.terminate).Emit(client.ctx, cnet.KILL)
 		(*client.terminate).RemoveListener(cnet.KILL)
@@ -289,43 +302,54 @@ func (client *Client) Handle(message *hub.SessionMessage, reply *string) error {
 }
 
 func (client *Client) handleMessage(msg string, reply *string) error {
-	targetMessage, decodeError := base64Decode(msg)
-	if decodeError {
-		return fmt.Errorf("invalid target message")
-	}
-	service := client.getChannelFromMessage([]byte(targetMessage))
-	rpcRequset := client.isRpcRequest([]byte(targetMessage))
+	errorChannel := make(chan *string)
+	client.incommingDispatcher.Dispatch(func() {
+		targetMessage, decodeError := base64Decode(msg)
+		if decodeError {
+			errorChannel <- ptr("invalid target message")
+			return
+		}
+		service := client.getChannelFromMessage([]byte(targetMessage))
+		rpcRequset := client.isRpcRequest([]byte(targetMessage))
 
-	if rpcRequset {
-		inevt := client.servicesInEvents[*service]
-		evt := client.servicesOutEvents[*service]
-		if evt == nil || inevt == nil {
-			return fmt.Errorf("invalid target out event")
+		if rpcRequset {
+			inevt := client.servicesInEvents[*service]
+			evt := client.servicesOutEvents[*service]
+			if evt == nil || inevt == nil {
+				errorChannel <- ptr("invalid target out event")
+				return
+			}
+			req := clientRequest{}
+			json.Unmarshal([]byte(targetMessage), &req)
+			ready := make(chan []byte)
+			evtKey := uuid.Must(uuid.NewRandom()).String()
+			(*evt).AddListener(func(ctx context.Context, b []byte) {
+				ready <- b
+			}, evtKey)
+			(*inevt).Emit(client.ctx, []byte(targetMessage))
+			targetResponse := <-ready
+			(*evt).RemoveListener(evtKey)
+			clientResp := &clientResponse{}
+			json.Unmarshal(targetResponse, clientResp)
+			clientResp.Id = req.Id
+			clientResp.Channel = service
+			tresp, e := JSONMarshal(clientResp)
+			if e == nil {
+				*reply = base64Encode(string(tresp))
+			}
+		} else if service != nil && client.servicesInEvents[*service] != nil {
+			inevt := client.servicesInEvents[*service]
+			if inevt == nil {
+				errorChannel <- ptr("invalid target in event")
+				return
+			}
+			(*inevt).Emit(client.ctx, []byte(targetMessage))
 		}
-		req := clientRequest{}
-		json.Unmarshal([]byte(targetMessage), &req)
-		ready := make(chan []byte)
-		evtKey := uuid.Must(uuid.NewRandom()).String()
-		(*evt).AddListener(func(ctx context.Context, b []byte) {
-			ready <- b
-		}, evtKey)
-		(*inevt).Emit(client.ctx, []byte(targetMessage))
-		targetResponse := <-ready
-		(*evt).RemoveListener(evtKey)
-		clientResp := &clientResponse{}
-		json.Unmarshal(targetResponse, clientResp)
-		clientResp.Id = req.Id
-		clientResp.Channel = service
-		tresp, e := JSONMarshal(clientResp)
-		if e == nil {
-			*reply = base64Encode(string(tresp))
-		}
-	} else if service != nil && client.servicesInEvents[*service] != nil {
-		inevt := client.servicesInEvents[*service]
-		if inevt == nil {
-			return fmt.Errorf("invalid target in event")
-		}
-		(*inevt).Emit(client.ctx, []byte(targetMessage))
+		errorChannel <- nil
+	})
+	result := <-errorChannel
+	if result != nil {
+		return fmt.Errorf(*result)
 	}
 	return nil
 }
@@ -358,9 +382,9 @@ func RegisterService[T any](rcvr *T, client *Client, targetProvider func() *stri
 	rpc.Register(rcvr)
 	client.Services[sname] = jsonrpc.NewClient(conn)
 	(*client.outEvents[sname]).AddListener(func(ctx context.Context, b []byte) {
-		go func(targetData []byte) {
+		client.outgoingDispatcher.Dispatch(func() {
 			req := clientRequest{}
-			json.Unmarshal(targetData, &req)
+			json.Unmarshal(b, &req)
 			message := &hub.SessionMessage{
 				Session: *client.Session,
 				Sender:  *client.Id,
@@ -384,7 +408,7 @@ func RegisterService[T any](rcvr *T, client *Client, targetProvider func() *stri
 				return
 			}
 			(*client.events[sname]).Emit(client.ctx, data)
-		}(b)
+		})
 	}, sname)
 	go rpc.ServeCodec(jsonrpc.NewServerCodec(inconn))
 }

@@ -41,11 +41,14 @@ type Client struct {
 }
 
 func (c *Client) startJsonRPC() {
-	sessionManagerConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["SessionManager"], nil, c.terminate, c.Socket.Conn)
-	hubConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["Hub"], nil, c.terminate, c.Socket.Conn)
+	// setup communication to client
 	clientCon := cnet.NetConn(c.ctx, c.mutex, *c.Events["Client"], nil, c.terminate, c.Socket.Conn)
 	c.rpcClient = jsonrpc.NewClient(clientCon) // jsonrpc2 client
 	c.Hub.Register <- c
+
+	// hub has registered the client
+	sessionManagerConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["SessionManager"], nil, c.terminate, c.Socket.Conn)
+	hubConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["Hub"], nil, c.terminate, c.Socket.Conn)
 	go jsonrpc.ServeConn(sessionManagerConn) // jsonrpc2 server
 	go jsonrpc.ServeConn(hubConn)            // jsonrpc2 server
 }

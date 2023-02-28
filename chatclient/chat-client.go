@@ -11,6 +11,10 @@ import (
 	"github.com/nmorenor/chezmoi-net/utils"
 )
 
+const (
+	broadcast = "-1"
+)
+
 func NewChatClient(currentClient *client.Client, hostMode bool) *ChatClient {
 	chatClient := &ChatClient{Client: currentClient, participants: make(map[string]*string), mutex: &sync.Mutex{}, queueMutex: &sync.Mutex{}, Host: hostMode, outUueue: utils.NewQueue[string]()}
 	chatClient.Client.OnConnect = chatClient.onReady
@@ -40,6 +44,9 @@ func (chatClient *ChatClient) target() *string {
 		return nil
 	}
 	target := chatClient.outUueue.Remove()
+	if *target == broadcast {
+		return nil
+	}
 	return target
 }
 
@@ -93,6 +100,10 @@ func (chatClient *ChatClient) sendMessage(message string) {
 				chatClient.outUueue.Add(candidate)
 				chatClient.queueMutex.Unlock()
 				message = suffix[strings.Index(suffix, "]")+1:]
+			} else {
+				chatClient.queueMutex.Lock()
+				chatClient.outUueue.Add(ptr(broadcast))
+				chatClient.queueMutex.Unlock()
 			}
 		}
 	}
@@ -101,6 +112,10 @@ func (chatClient *ChatClient) sendMessage(message string) {
 		var reply string
 		rpcClient.Call(sname+".OnMessage", Message{Source: *chatClient.Client.Id, Message: message}, &reply)
 	}
+}
+
+func ptr[T any](t T) *T {
+	return &t
 }
 
 func (chatClient *ChatClient) findParticipantFromName(target string) *string {
