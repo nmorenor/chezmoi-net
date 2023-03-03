@@ -88,8 +88,8 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}
 	client.Socket.OnPingReceived = func(data string, socket Socket) {
 		sendMu.Lock()
+		defer sendMu.Unlock()
 		socket.Conn.WriteMessage(websocket.PongMessage, []byte("nice"))
-		sendMu.Unlock()
 	}
 	client.Socket.OnTextMessage = func(message string, socket Socket) {
 		data := make(map[string]*string)

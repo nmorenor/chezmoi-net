@@ -36,7 +36,7 @@ func app(hostMode bool) {
 }
 
 func main() {
-	joinMode := flag.Bool("join", false, "http service address")
+	joinMode := flag.Bool("join", false, "Join as participant")
 	flag.Parse()
 	app(!*joinMode)
 }

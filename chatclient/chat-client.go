@@ -130,12 +130,12 @@ func (chatClient *ChatClient) findParticipantFromName(target string) *string {
 /**
  * Message received from rcp call, RPC methods must follow the signature
  */
-func (hostClient *ChatClient) OnMessage(message *Message, reply *string) error {
-	hostClient.mutex.Lock()
-	defer hostClient.mutex.Unlock()
+func (chatClient *ChatClient) OnMessage(message *Message, reply *string) error {
+	chatClient.mutex.Lock()
+	defer chatClient.mutex.Unlock()
 
-	if hostClient.participants[message.Source] != nil {
-		from := hostClient.participants[message.Source]
+	if chatClient.participants[message.Source] != nil {
+		from := chatClient.participants[message.Source]
 		fmt.Printf("%s: %s\n", *from, message.Message)
 	}
 	*reply = "OK"

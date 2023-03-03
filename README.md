@@ -28,4 +28,7 @@ if rpcClient != nil {
     rpcClient.Call(sname+".OnMessage", Message{Source: *chatClient.Client.Id, Message: message}, &reply)
 }
 ```
+## Bigger example
+
+https://github.com/nmorenor/chezmoi
 
