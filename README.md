@@ -12,7 +12,7 @@ This is a bi-directional JsonRPC2 implementation over Web Socket. The most basic
 ## Register rpc call
 
 ```
-// Use the client package register service function
+// Use the client package register service functions
 client.RegisterService(chatClient, chatClient.Client, chatClient.target)
 ```
 
