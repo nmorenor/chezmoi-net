@@ -340,6 +340,7 @@ func (client *Client) handleMessage(msg string, reply *string) error {
 			clientResp.Id = req.Id
 			clientResp.Channel = service
 			tresp, e := JSONMarshal(clientResp)
+			clientResp.Result = (*json.RawMessage)(&tresp)
 			if e == nil {
 				*reply = base64Encode(string(tresp))
 			}
