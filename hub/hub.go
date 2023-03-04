@@ -117,7 +117,7 @@ func (h *Hub) Run() {
 						}
 					}
 
-					client.Close() // terminate any json rpc serve
+					client.Close() // terminate any json rpc serve routines
 					delete(h.Clients, client)
 					delete(h.IdClients, client.Id)
 				}

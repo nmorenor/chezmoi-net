@@ -25,7 +25,7 @@ func app() {
 	})
 	err := http.ListenAndServe(*addr, nil)
 	if err != nil {
-		log.Fatal("ListenAndServe: ", err)
+		log.Fatal("ListenAndServe error: ", err)
 	}
 }
 
