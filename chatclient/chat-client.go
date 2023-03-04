@@ -154,4 +154,8 @@ func (chatClient *ChatClient) onSessionChange(event client.SessionChangeEvent) {
 	if event.EventType == client.SESSION_LEAVE && oldParticipants[event.EventSource] != nil {
 		fmt.Printf("%s has leaved the session\n", *oldParticipants[event.EventSource])
 	}
+	if event.EventType == client.SESSION_END {
+		fmt.Println("Session closed")
+		chatClient.Client.Close()
+	}
 }

@@ -83,6 +83,10 @@ type LeavingMessage struct {
 	Id string
 }
 
+type ClosedMessage struct {
+	Session string
+}
+
 func (h *Hub) Run() {
 	rpc.Register(h)
 	rpc.Register(h.SessionManager)
@@ -106,16 +110,13 @@ func (h *Hub) Run() {
 				defer h.mutex.Unlock()
 				if _, ok := h.Clients[client]; ok {
 					if client.Session != nil && h.SessionManager.Sessions[*client.Session] != nil {
-						sess := h.SessionManager.Sessions[*client.Session]
-						h.SessionManager.LeaveSession(client.Id, *client.Session)
 						if h.SessionManager.Sessions[*client.Session].Host == client {
-							delete(h.SessionManager.Sessions, sess.Id)
-							for next := range sess.Participants {
-								// TODO send close session message before closing
-								next.Socket.Conn.Close()
-							}
+							h.SessionManager.CloseSession(*client.Session)
+						} else {
+							h.SessionManager.LeaveSession(client.Id, *client.Session)
 						}
 					}
+
 					client.Close() // terminate any json rpc serve
 					delete(h.Clients, client)
 					delete(h.IdClients, client.Id)

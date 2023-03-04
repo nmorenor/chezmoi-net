@@ -267,6 +267,12 @@ func (client *Client) ParticipantLeave(message *hub.LeavingMessage, reply *strin
 	return nil
 }
 
+func (client *Client) SessionClosed(message *hub.ClosedMessage, reply *string) error {
+	(*client.sessionChanged).Emit(client.ctx, SessionChangeEvent{EventSource: message.Session, EventType: SESSION_END})
+	*reply = "OK"
+	return nil
+}
+
 func (c *Client) StartHosting(username string) string {
 	c.Host = true
 	c.Session = ptr(uuid.Must(uuid.NewRandom()).String())

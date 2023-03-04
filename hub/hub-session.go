@@ -87,6 +87,21 @@ func (sessionManager *SessionManager) LeaveSession(targetParticipantId string, t
 	}(targetParticipantId, session)
 }
 
+func (sessionManager *SessionManager) CloseSession(targetSession string) {
+	if sessionManager.Sessions[targetSession] != nil {
+		sess := sessionManager.Sessions[targetSession]
+		delete(sessionManager.Sessions, targetSession)
+		for next := range sess.Participants {
+			if sess.Host.Id == next.Id {
+				continue
+			}
+			var status string
+			next.rpcClient.Call("Client.SessionClosed", &ClosedMessage{Session: *next.Session}, &status)
+			next.Socket.Conn.Close()
+		}
+	}
+}
+
 type MembersMessage struct {
 	Session string
 }

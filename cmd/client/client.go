@@ -28,6 +28,10 @@ func app(hostMode bool) {
 	} else {
 		fmt.Println("Starting as Participant")
 	}
+	go func() {
+		<-hostClient.Client.Interrupt
+		interrupt <- os.Kill
+	}()
 	currentClient.Connect()
 	<-interrupt
 	log.Println("Interrupt")
