@@ -340,7 +340,6 @@ func (client *Client) handleMessage(msg string, reply *string) error {
 			clientResp.Id = req.Id
 			clientResp.Channel = service
 			tresp, e := JSONMarshal(clientResp)
-			clientResp.Result = (*json.RawMessage)(&tresp)
 			if e == nil {
 				*reply = base64Encode(string(tresp))
 			}
@@ -399,14 +398,16 @@ func RegisterService[T any](rcvr *T, client *Client, targetProvider func() *stri
 				Target:  targetProvider(),
 				Message: base64Encode(string(b)),
 			}
-			var response any
+			var response string
 			err := client.hubRpcClient.Call("Hub.Handle", message, &response)
-			resData, _ := JSONMarshal(response)
+			response, _ = base64Decode(response)
+			remoteResponse := &clientResponse{}
+			json.Unmarshal([]byte(response), remoteResponse)
 
 			clientResp := clientResponse{
 				Id:      req.Id,
 				Channel: &sname,
-				Result:  (*json.RawMessage)(&resData),
+				Result:  remoteResponse.Result,
 				Error:   err,
 			}
 			data, err := JSONMarshal(clientResp)
