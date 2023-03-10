@@ -19,11 +19,11 @@ const (
 	KILL = "kill"
 )
 
-func NetConn(ctx *context.Context, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c *websocket.Conn) net.Conn {
+func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c *websocket.Conn) net.Conn {
 	nc := &netConn{
 		c:          c,
 		ctx:        ctx,
-		mutex:      &sync.Mutex{},
+		mutex:      mutex,
 		outEvt:     outEvent,
 		terminate:  terminateSignal,
 		terminated: false,

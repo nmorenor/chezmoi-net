@@ -61,7 +61,7 @@ type Client struct {
 	OnConnect               func()
 	sessionManagerRpcClient *rpc.Client
 	hubRpcClient            *rpc.Client
-	mutex                   *sync.Mutex
+	outmutex                *sync.Mutex
 	conns                   map[string]*net.Conn
 	inconns                 map[string]*net.Conn
 	Services                map[string]*rpc.Client
@@ -88,7 +88,7 @@ func NewClient(socket gowebsocket.Socket) *Client {
 		servicesInEvents:    make(map[string]*signals.Signal[[]byte]),
 		servicesOutEvents:   make(map[string]*signals.Signal[[]byte]),
 		outEvents:           make(map[string]*signals.Signal[[]byte]),
-		mutex:               &sync.Mutex{},
+		outmutex:            &sync.Mutex{},
 		conns:               make(map[string]*net.Conn),
 		inconns:             make(map[string]*net.Conn),
 		Services:            make(map[string]*rpc.Client),
@@ -118,9 +118,9 @@ func (client *Client) OnConnectError(err error, socket gowebsocket.Socket) {
 }
 
 func (client *Client) OnConnected(socket gowebsocket.Socket) {
-	netConn := cnet.NetConn(&client.ctx, *client.mainEvents["SessionManager"], nil, client.terminate, client.ws.Conn)  // outgoing
-	hubnetConn := cnet.NetConn(&client.ctx, *client.mainEvents["Hub"], nil, client.terminate, client.ws.Conn)          // outgoing
-	incommingNetConn := cnet.NetConn(&client.ctx, *client.mainEvents["Client"], nil, client.terminate, client.ws.Conn) // incomming
+	netConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["SessionManager"], nil, client.terminate, client.ws.Conn)  // outgoing
+	hubnetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Hub"], nil, client.terminate, client.ws.Conn)          // outgoing
+	incommingNetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Client"], nil, client.terminate, client.ws.Conn) // incomming
 	client.netCon = &netConn
 	client.incommingCon = &incommingNetConn
 	client.hubConn = &hubnetConn
@@ -135,8 +135,8 @@ func (client *Client) OnConnected(socket gowebsocket.Socket) {
 		if !client.ws.IsConnected {
 			return
 		}
-		client.mutex.Lock()
-		defer client.mutex.Unlock()
+		client.outmutex.Lock()
+		defer client.outmutex.Unlock()
 		client.ws.Conn.WriteMessage(websocket.PingMessage, []byte("hello"))
 	}(client, client.pingTimer)
 	go jsonrpc.ServeConn(*client.incommingCon)
@@ -361,10 +361,11 @@ func (client *Client) handleMessage(msg string, reply *string) error {
 }
 
 type clientRequest struct {
-	Method  string `json:"method"`
-	Channel string `json:"channel"`
-	Params  [1]any `json:"params"`
-	Id      uint64 `json:"id"`
+	Method  string  `json:"method"`
+	Target  *string `json:"target"`
+	Channel string  `json:"channel"`
+	Params  [1]any  `json:"params"`
+	Id      uint64  `json:"id"`
 }
 
 type clientResponse struct {
@@ -374,15 +375,15 @@ type clientResponse struct {
 	Error   any              `json:"error"`
 }
 
-func RegisterService[T any](rcvr *T, client *Client, targetProvider func() *string) {
+func RegisterService[T any](rcvr *T, client *Client) {
 	val := reflect.ValueOf(rcvr)
 	sname := reflect.Indirect(val).Type().Name()
 	client.events[sname] = ptr(signals.New[[]byte]())
 	client.outEvents[sname] = ptr(signals.New[[]byte]())
 	client.servicesInEvents[sname] = ptr(signals.New[[]byte]())
 	client.servicesOutEvents[sname] = ptr(signals.New[[]byte]())
-	conn := cnet.NetConn(&client.ctx, *client.events[sname], client.outEvents[sname], client.terminate, nil)
-	inconn := cnet.NetConn(&client.ctx, *client.servicesInEvents[sname], client.servicesOutEvents[sname], client.terminate, nil)
+	conn := cnet.NetConn(&client.ctx, client.outmutex, *client.events[sname], client.outEvents[sname], client.terminate, nil)
+	inconn := cnet.NetConn(&client.ctx, client.outmutex, *client.servicesInEvents[sname], client.servicesOutEvents[sname], client.terminate, nil)
 	client.conns[sname] = &conn
 	client.inconns[sname] = &inconn
 	rpc.Register(rcvr)
@@ -391,11 +392,15 @@ func RegisterService[T any](rcvr *T, client *Client, targetProvider func() *stri
 		client.outgoingDispatcher.Dispatch(func() {
 			req := clientRequest{}
 			json.Unmarshal(b, &req)
+			var target *string
+			if req.Target != nil && *req.Target != "-1" {
+				target = req.Target
+			}
 			message := &hub.SessionMessage{
 				Session: *client.Session,
 				Sender:  *client.Id,
 				Channel: sname,
-				Target:  targetProvider(),
+				Target:  target,
 				Message: base64Encode(string(b)),
 			}
 			var response string
@@ -434,10 +439,13 @@ func (client *Client) GetRpcClientForService(service any) *rpc.Client {
 	return client.Services[sname]
 }
 
-func (client *Client) GetServiceName(service any) string {
+func (client *Client) GetServiceName(service any, method string, target *string) string {
 	val := reflect.ValueOf(service)
 	sname := reflect.Indirect(val).Type().Name()
-	return sname
+	if target != nil {
+		return fmt.Sprintf("[%s]%s.%s", *target, sname, method)
+	}
+	return fmt.Sprintf("[-1]%s.%s", sname, method)
 }
 
 func base64Encode(str string) string {

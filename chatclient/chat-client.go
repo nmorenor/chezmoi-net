@@ -8,15 +8,10 @@ import (
 	"sync"
 
 	"github.com/nmorenor/chezmoi-net/client"
-	"github.com/nmorenor/chezmoi-net/utils"
-)
-
-const (
-	broadcast = "-1"
 )
 
 func NewChatClient(currentClient *client.Client, hostMode bool) *ChatClient {
-	chatClient := &ChatClient{Client: currentClient, participants: make(map[string]*string), inmutex: &sync.Mutex{}, outMutex: &sync.Mutex{}, queueMutex: &sync.Mutex{}, Host: hostMode, outUueue: utils.NewQueue[string]()}
+	chatClient := &ChatClient{Client: currentClient, participants: make(map[string]*string), inmutex: &sync.Mutex{}, outMutex: &sync.Mutex{}, Host: hostMode}
 	chatClient.Client.OnConnect = chatClient.onReady
 	chatClient.Client.OnSessionChange = chatClient.onSessionChange
 	return chatClient
@@ -31,30 +26,14 @@ type ChatClient struct {
 	Host         bool
 	Client       *client.Client
 	participants map[string]*string
-	outUueue     *utils.Queue[string]
 	inmutex      *sync.Mutex
 	outMutex     *sync.Mutex
-	queueMutex   *sync.Mutex
-}
-
-func (chatClient *ChatClient) target() *string {
-	chatClient.queueMutex.Lock()
-	defer chatClient.queueMutex.Unlock()
-
-	if chatClient.outUueue.IsEmpty() {
-		return nil
-	}
-	target := chatClient.outUueue.Remove()
-	if *target == broadcast {
-		return nil
-	}
-	return target
 }
 
 // This will be called when web socket is connected
 func (chatClient *ChatClient) onReady() {
 	// Register this (ChatClient) instance to receive rcp calls
-	client.RegisterService(chatClient, chatClient.Client, chatClient.target)
+	client.RegisterService(chatClient, chatClient.Client)
 	var username string
 	fmt.Println("username:")
 	fmt.Scan(&username)
@@ -89,29 +68,23 @@ func (chatClient *ChatClient) sendMessage(message string) {
 	chatClient.outMutex.Lock()
 	defer chatClient.outMutex.Unlock()
 	rpcClient := chatClient.Client.GetRpcClientForService(*chatClient)
-	sname := chatClient.Client.GetServiceName(*chatClient)
 
 	// if message starts with [memberName] try to lookup as target
+	target := "-1"
 	if strings.Index(message, "[") == 0 {
 		suffix := message[1:]
 		if strings.Contains(suffix, "]") {
 			candidate := chatClient.findParticipantFromName(suffix[0:strings.Index(suffix, "]")])
 			if candidate != nil {
-				chatClient.queueMutex.Lock()
-				chatClient.outUueue.Add(candidate)
-				chatClient.queueMutex.Unlock()
 				message = suffix[strings.Index(suffix, "]")+1:]
-			} else {
-				chatClient.queueMutex.Lock()
-				chatClient.outUueue.Add(ptr(broadcast))
-				chatClient.queueMutex.Unlock()
+				target = *candidate
 			}
 		}
 	}
-
+	sname := chatClient.Client.GetServiceName(*chatClient, "OnMessage", &target)
 	if rpcClient != nil {
 		var reply string
-		rpcClient.Call(sname+".OnMessage", Message{Source: *chatClient.Client.Id, Message: message}, &reply)
+		rpcClient.Call(sname, Message{Source: *chatClient.Client.Id, Message: message}, &reply)
 	}
 }
 
