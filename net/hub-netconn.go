@@ -42,15 +42,11 @@ func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byt
 	nc.readTimer.Stop()
 
 	event.AddListener(func(ctx context.Context, b []byte) {
-		nc.mutex.Lock()
-		defer nc.mutex.Unlock()
 		nc.Incomming <- b
 	}, nc.cleanKey)
 
 	if terminateSignal != nil {
 		(*terminateSignal).AddListener(func(ctx context.Context, s string) {
-			nc.mutex.Lock()
-			defer nc.mutex.Unlock()
 			nc.Incomming <- []byte(KILL)
 		}, KILL)
 	}
@@ -92,9 +88,10 @@ func (c *netConn) Close() error {
 }
 
 func (c *netConn) Write(p []byte) (int, error) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+
 	if c.c != nil {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
 		err := c.c.WriteMessage(websocket.BinaryMessage, p)
 		if err != nil {
 			return 0, err
