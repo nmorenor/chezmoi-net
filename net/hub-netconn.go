@@ -120,7 +120,10 @@ func (c *netConn) Read(p []byte) (int, error) {
 		c.reader = bytes.NewReader(r)
 	}
 	n, err := c.reader.Read(p)
-	c.reader = nil
+	if err == io.EOF {
+		c.reader = nil
+		err = nil
+	}
 	return n, err
 }
 
