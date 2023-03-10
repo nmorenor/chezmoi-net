@@ -16,7 +16,7 @@ const (
 )
 
 func NewChatClient(currentClient *client.Client, hostMode bool) *ChatClient {
-	chatClient := &ChatClient{Client: currentClient, participants: make(map[string]*string), mutex: &sync.Mutex{}, queueMutex: &sync.Mutex{}, Host: hostMode, outUueue: utils.NewQueue[string]()}
+	chatClient := &ChatClient{Client: currentClient, participants: make(map[string]*string), inmutex: &sync.Mutex{}, outMutex: &sync.Mutex{}, queueMutex: &sync.Mutex{}, Host: hostMode, outUueue: utils.NewQueue[string]()}
 	chatClient.Client.OnConnect = chatClient.onReady
 	chatClient.Client.OnSessionChange = chatClient.onSessionChange
 	return chatClient
@@ -32,7 +32,8 @@ type ChatClient struct {
 	Client       *client.Client
 	participants map[string]*string
 	outUueue     *utils.Queue[string]
-	mutex        *sync.Mutex
+	inmutex      *sync.Mutex
+	outMutex     *sync.Mutex
 	queueMutex   *sync.Mutex
 }
 
@@ -85,8 +86,8 @@ func (chatClient *ChatClient) onReady() {
 }
 
 func (chatClient *ChatClient) sendMessage(message string) {
-	chatClient.mutex.Lock()
-	defer chatClient.mutex.Unlock()
+	chatClient.outMutex.Lock()
+	defer chatClient.outMutex.Unlock()
 	rpcClient := chatClient.Client.GetRpcClientForService(*chatClient)
 	sname := chatClient.Client.GetServiceName(*chatClient)
 
@@ -131,9 +132,8 @@ func (chatClient *ChatClient) findParticipantFromName(target string) *string {
  * Message received from rcp call, RPC methods must follow the signature
  */
 func (chatClient *ChatClient) OnMessage(message *Message, reply *string) error {
-	chatClient.mutex.Lock()
-	defer chatClient.mutex.Unlock()
-
+	chatClient.inmutex.Lock()
+	defer chatClient.inmutex.Unlock()
 	if chatClient.participants[message.Source] != nil {
 		from := chatClient.participants[message.Source]
 		fmt.Printf("%s: %s\n", *from, message.Message)
@@ -143,8 +143,8 @@ func (chatClient *ChatClient) OnMessage(message *Message, reply *string) error {
 }
 
 func (chatClient *ChatClient) onSessionChange(event client.SessionChangeEvent) {
-	chatClient.mutex.Lock()
-	defer chatClient.mutex.Unlock()
+	chatClient.inmutex.Lock()
+	defer chatClient.inmutex.Unlock()
 	response := chatClient.Client.SessionMembers()
 	oldParticipants := chatClient.participants
 	chatClient.participants = response.Members
