@@ -41,6 +41,7 @@ type SessionChangeEvent struct {
 }
 
 type Client struct {
+	ts                      int
 	Id                      *string
 	Session                 *string
 	Host                    bool
@@ -69,12 +70,14 @@ type Client struct {
 	pingTimer               *time.Timer
 	outgoingDispatcher      *artifex.Dispatcher
 	incommingDispatcher     *artifex.Dispatcher
+	rpcServer               *rpc.Server
 }
 
 var IncommingMessage = signals.New[[]byte]()
 
 func NewClient(socket gowebsocket.Socket) *Client {
 	wsClient := Client{
+		ts:                  int(time.Now().UnixMilli()),
 		Id:                  nil,
 		ws:                  &socket,
 		netCon:              nil,
@@ -97,6 +100,7 @@ func NewClient(socket gowebsocket.Socket) *Client {
 		pingTimer:           time.NewTimer(30 * time.Second),
 		outgoingDispatcher:  artifex.NewDispatcher(10, 100),
 		incommingDispatcher: artifex.NewDispatcher(10, 100),
+		rpcServer:           rpc.NewServer(),
 	}
 	wsClient.ws.OnConnected = wsClient.OnConnected
 	wsClient.ws.OnConnectError = wsClient.OnConnectError
@@ -106,7 +110,7 @@ func NewClient(socket gowebsocket.Socket) *Client {
 	wsClient.mainEvents["SessionManager"] = ptr(signals.New[[]byte]())
 	wsClient.mainEvents["Client"] = ptr(signals.New[[]byte]())
 	wsClient.mainEvents["Hub"] = ptr(signals.New[[]byte]())
-	rpc.Register(&wsClient)
+	wsClient.rpcServer.Register(&wsClient)
 	wsClient.outgoingDispatcher.Start()
 	wsClient.incommingDispatcher.Start()
 	return &wsClient
@@ -139,7 +143,7 @@ func (client *Client) OnConnected(socket gowebsocket.Socket) {
 		defer client.outmutex.Unlock()
 		client.ws.Conn.WriteMessage(websocket.PingMessage, []byte("hello"))
 	}(client, client.pingTimer)
-	go jsonrpc.ServeConn(*client.incommingCon)
+	go client.rpcServer.ServeCodec(jsonrpc.NewServerCodec(*client.incommingCon))
 
 	// wait for server to send client id
 	go func(client *Client) {
@@ -245,6 +249,7 @@ func (client *Client) clean() {
 		(*conn).Close()
 	}
 	(*client.sessionChanged).RemoveListener("sessionChanged")
+	client.rpcServer = nil
 	fmt.Println("cleaned")
 }
 
@@ -386,7 +391,7 @@ func RegisterService[T any](rcvr *T, client *Client) {
 	inconn := cnet.NetConn(&client.ctx, client.outmutex, *client.servicesInEvents[sname], client.servicesOutEvents[sname], client.terminate, nil)
 	client.conns[sname] = &conn
 	client.inconns[sname] = &inconn
-	rpc.Register(rcvr)
+	client.rpcServer.Register(rcvr)
 	client.Services[sname] = jsonrpc.NewClient(conn)
 	(*client.outEvents[sname]).AddListener(func(ctx context.Context, b []byte) {
 		client.outgoingDispatcher.Dispatch(func() {
@@ -423,7 +428,7 @@ func RegisterService[T any](rcvr *T, client *Client) {
 			(*client.events[sname]).Emit(client.ctx, data)
 		})
 	}, sname)
-	go rpc.ServeCodec(jsonrpc.NewServerCodec(inconn))
+	go client.rpcServer.ServeCodec(jsonrpc.NewServerCodec(inconn))
 }
 
 func JSONMarshal(t interface{}) ([]byte, error) {
