@@ -15,14 +15,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/maniartech/signals"
 	"github.com/mborders/artifex"
 	cnet "github.com/nmorenor/chezmoi-net/net"
-	"github.com/sacOO7/gowebsocket"
 
 	"github.com/nmorenor/chezmoi-net/hub"
 	"github.com/nmorenor/chezmoi-net/jsonrpc"
+
+	"nhooyr.io/websocket"
 )
 
 const (
@@ -33,6 +33,25 @@ const (
 
 func ptr[T any](t T) *T {
 	return &t
+}
+
+type ClientWSWrapper struct {
+	Conn    *websocket.Conn
+	Context context.Context
+}
+
+func (c ClientWSWrapper) Close() error {
+	return c.Conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func (c ClientWSWrapper) Write(p []byte) error {
+	ctx, function := context.WithTimeout(c.Context, 5*time.Second)
+	defer function()
+	err := c.Conn.Write(ctx, websocket.MessageBinary, p)
+	if err != nil {
+		log.Println(err)
+	}
+	return err
 }
 
 type SessionChangeEvent struct {
@@ -46,7 +65,7 @@ type Client struct {
 	Session                 *string
 	Host                    bool
 	OnSessionChange         func(event SessionChangeEvent)
-	ws                      *gowebsocket.Socket
+	ws                      *cnet.Socket
 	netCon                  *net.Conn
 	incommingCon            *net.Conn
 	hubConn                 *net.Conn
@@ -71,11 +90,12 @@ type Client struct {
 	outgoingDispatcher      *artifex.Dispatcher
 	incommingDispatcher     *artifex.Dispatcher
 	rpcServer               *rpc.Server
+	wsWrapper               *ClientWSWrapper
 }
 
 var IncommingMessage = signals.New[[]byte]()
 
-func NewClient(socket gowebsocket.Socket) *Client {
+func NewClient(socket cnet.Socket) *Client {
 	wsClient := Client{
 		ts:                  int(time.Now().UnixMilli()),
 		Id:                  nil,
@@ -116,15 +136,16 @@ func NewClient(socket gowebsocket.Socket) *Client {
 	return &wsClient
 }
 
-func (client *Client) OnConnectError(err error, socket gowebsocket.Socket) {
+func (client *Client) OnConnectError(err error, socket cnet.Socket) {
 	log.Fatal("Received connect error - ", err)
 	client.clean()
 }
 
-func (client *Client) OnConnected(socket gowebsocket.Socket) {
-	netConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["SessionManager"], nil, client.terminate, client.ws.Conn)  // outgoing
-	hubnetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Hub"], nil, client.terminate, client.ws.Conn)          // outgoing
-	incommingNetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Client"], nil, client.terminate, client.ws.Conn) // incomming
+func (client *Client) OnConnected(socket cnet.Socket) {
+	client.wsWrapper = &ClientWSWrapper{Conn: socket.WebSocketConn, Context: socket.Context}
+	netConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["SessionManager"], nil, client.terminate, *client.wsWrapper)  // outgoing
+	hubnetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Hub"], nil, client.terminate, *client.wsWrapper)          // outgoing
+	incommingNetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Client"], nil, client.terminate, *client.wsWrapper) // incomming
 	client.netCon = &netConn
 	client.incommingCon = &incommingNetConn
 	client.hubConn = &hubnetConn
@@ -141,7 +162,7 @@ func (client *Client) OnConnected(socket gowebsocket.Socket) {
 		}
 		client.outmutex.Lock()
 		defer client.outmutex.Unlock()
-		client.ws.Conn.WriteMessage(websocket.PingMessage, []byte("hello"))
+		client.wsWrapper.Write([]byte("hello"))
 	}(client, client.pingTimer)
 	go client.rpcServer.ServeCodec(jsonrpc.NewServerCodec(*client.incommingCon))
 
@@ -155,19 +176,19 @@ func (client *Client) OnConnected(socket gowebsocket.Socket) {
 
 }
 
-func (client *Client) OnDisconnected(err error, socket gowebsocket.Socket) {
+func (client *Client) OnDisconnected(err error, socket cnet.Socket) {
 	log.Println("Disconnected from server ")
 	client.clean()
 	client.Interrupt <- 1
 }
 
-func (client *Client) OnTextMessage(message string, socket gowebsocket.Socket) {
+func (client *Client) OnTextMessage(message string, socket cnet.Socket) {
 	data := make(map[string]*string)
 	json.Unmarshal([]byte(message), &data)
 	// log.Println("Received message - " + message)
 }
 
-func (client *Client) OnBinaryMessage(data []byte, socket gowebsocket.Socket) {
+func (client *Client) OnBinaryMessage(data []byte, socket cnet.Socket) {
 	channel := client.getChannelFromMessage(data)
 	if channel != nil && client.events[*channel] != nil {
 		evt := *client.events[*channel]

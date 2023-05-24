@@ -9,8 +9,7 @@ import (
 
 	"github.com/nmorenor/chezmoi-net/chatclient"
 	"github.com/nmorenor/chezmoi-net/client"
-
-	"github.com/sacOO7/gowebsocket"
+	"github.com/nmorenor/chezmoi-net/net"
 )
 
 /**
@@ -21,7 +20,7 @@ import (
 func app(hostMode bool) {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
-	currentClient := client.NewClient(gowebsocket.New("ws://localhost:8080/ws"))
+	currentClient := client.NewClient(net.New("ws://localhost:8080/ws"))
 	hostClient := chatclient.NewChatClient(currentClient, hostMode)
 	if hostClient.Host {
 		fmt.Println("Starting as Host")

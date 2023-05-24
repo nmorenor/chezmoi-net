@@ -24,6 +24,19 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+type ClientHubWSWrapper struct {
+	Conn *websocket.Conn
+}
+
+func (c ClientHubWSWrapper) Close() error {
+	c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+	return c.Conn.Close()
+}
+
+func (c ClientHubWSWrapper) Write(p []byte) error {
+	return c.Conn.WriteMessage(websocket.BinaryMessage, p)
+}
+
 // Client is a middleman between the websocket connection and the hub.
 type Client struct {
 	Hub     *Hub
@@ -38,17 +51,18 @@ type Client struct {
 	rpcClient *rpc.Client
 	ctx       *context.Context
 	Ready     bool
+	wsWrapper ClientHubWSWrapper
 }
 
 func (c *Client) startJsonRPC() {
 	// setup communication to client
-	clientCon := cnet.NetConn(c.ctx, c.mutex, *c.Events["Client"], nil, c.terminate, c.Socket.Conn)
+	clientCon := cnet.NetConn(c.ctx, c.mutex, *c.Events["Client"], nil, c.terminate, c.wsWrapper)
 	c.rpcClient = jsonrpc.NewClient(clientCon) // jsonrpc2 client
 	c.Hub.Register <- c
 
 	// hub has registered the client
-	sessionManagerConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["SessionManager"], nil, c.terminate, c.Socket.Conn)
-	hubConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["Hub"], nil, c.terminate, c.Socket.Conn)
+	sessionManagerConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["SessionManager"], nil, c.terminate, c.wsWrapper)
+	hubConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["Hub"], nil, c.terminate, c.wsWrapper)
 	go jsonrpc.ServeConn(sessionManagerConn) // jsonrpc2 server
 	go jsonrpc.ServeConn(hubConn)            // jsonrpc2 server
 }
@@ -77,6 +91,7 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		Ready:     false,
 		ctx:       &ctx,
 		mutex:     sendMu,
+		wsWrapper: ClientHubWSWrapper{Conn: conn},
 	}
 	client.Events["SessionManager"] = ptr(signals.New[[]byte]())
 	client.Events["Hub"] = ptr(signals.New[[]byte]())
@@ -98,6 +113,12 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}
 	client.Socket.OnBinaryMessage = func(data []byte, socket Socket) {
 		mdata := make(map[string]*string)
+		if string(data) == "hello" {
+			sendMu.Lock()
+			defer sendMu.Unlock()
+			socket.Conn.WriteMessage(websocket.PongMessage, []byte("nice"))
+			return
+		}
 		json.Unmarshal(data, &mdata)
 		if mdata["method"] != nil {
 			methodData := *mdata["method"]

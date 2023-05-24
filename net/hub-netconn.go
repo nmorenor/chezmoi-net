@@ -1,4 +1,4 @@
-package hub
+package net
 
 import (
 	"bytes"
@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 	"github.com/maniartech/signals"
 )
 
@@ -19,7 +18,12 @@ const (
 	KILL = "kill"
 )
 
-func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c *websocket.Conn) net.Conn {
+type ConnectionWrapper interface {
+	Close() error
+	Write(p []byte) error
+}
+
+func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c ConnectionWrapper) net.Conn {
 	nc := &netConn{
 		c:          c,
 		ctx:        ctx,
@@ -55,7 +59,7 @@ func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byt
 }
 
 type netConn struct {
-	c          *websocket.Conn
+	c          ConnectionWrapper
 	outEvt     *signals.Signal[[]byte]
 	inEvt      *signals.Signal[[]byte]
 	terminate  *signals.Signal[string]
@@ -83,7 +87,6 @@ func (c *netConn) Close() error {
 	}
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	c.c.WriteMessage(websocket.CloseMessage, []byte{})
 	return c.c.Close()
 }
 
@@ -92,7 +95,7 @@ func (c *netConn) Write(p []byte) (int, error) {
 	if c.c != nil {
 		c.mutex.Lock()
 		defer c.mutex.Unlock()
-		err := c.c.WriteMessage(websocket.BinaryMessage, p)
+		err := c.c.Write(p)
 		if err != nil {
 			return 0, err
 		}
