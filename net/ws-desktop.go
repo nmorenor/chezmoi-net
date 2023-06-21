@@ -19,5 +19,6 @@ func dialWs(ctx context.Context, url string, tlsConfig *tls.Config) (*websocket.
 			},
 		},
 	})
+	wsConn.SetReadLimit(150000)
 	return wsConn, err
 }
