@@ -108,6 +108,7 @@ type MembersMessage struct {
 
 type MembersMessageResponse struct {
 	Members map[string]*string
+	Host    string
 }
 
 func (sessionManager *SessionManager) Members(message *MembersMessage, reply *MembersMessageResponse) error {
@@ -120,6 +121,7 @@ func (sessionManager *SessionManager) Members(message *MembersMessage, reply *Me
 		result.Members[next.Id] = next.Name
 	}
 	result.Members[session.Host.Id] = session.Host.Name
+	result.Host = session.Host.Id
 	*reply = result
 	return nil
 }
