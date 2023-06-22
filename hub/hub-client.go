@@ -22,6 +22,7 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+	CheckOrigin:     func(r *http.Request) bool { return true }, // TODO: make this more secure
 }
 
 type ClientHubWSWrapper struct {
@@ -69,6 +70,33 @@ func (c *Client) startJsonRPC() {
 
 func ptr[T any](t T) *T {
 	return &t
+}
+
+type AvailableSession struct {
+	ID              string `json:"id"`
+	SessionHostName string `json:"name"`
+	Size            int    `json:"size"`
+}
+
+func enableCors(w *http.ResponseWriter) {
+	(*w).Header().Set("Access-Control-Allow-Origin", "*")
+	(*w).Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	(*w).Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
+}
+
+func HubSessions(hub *Hub, w http.ResponseWriter, r *http.Request) {
+	enableCors(&w)
+	if r.Method == "OPTIONS" {
+		return
+	}
+	if r.Method != "GET" {
+		return
+	}
+	currentSessions := []AvailableSession{}
+	for id, next := range hub.SessionManager.Sessions {
+		currentSessions = append(currentSessions, AvailableSession{ID: id, SessionHostName: *next.Host.Name, Size: len(next.Participants)})
+	}
+	json.NewEncoder(w).Encode(currentSessions)
 }
 
 // serveWs handles websocket requests from the peer.

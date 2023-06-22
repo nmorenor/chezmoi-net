@@ -20,6 +20,9 @@ func app() {
 	log.Println("Starting...")
 	hubInstance := hub.NewHub()
 	go hubInstance.Run()
+	http.HandleFunc("/hub-sessions", func(w http.ResponseWriter, r *http.Request) {
+		hub.HubSessions(hubInstance, w, r)
+	})
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		hub.ServeWs(hubInstance, w, r)
 	})
