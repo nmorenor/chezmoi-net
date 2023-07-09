@@ -18,12 +18,12 @@ const (
 	KILL = "kill"
 )
 
-type ConnectionWrapper interface {
+type ClientHandler interface {
 	Close() error
 	Write(p []byte) error
 }
 
-func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c ConnectionWrapper) net.Conn {
+func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c ClientHandler) net.Conn {
 	nc := &netConn{
 		c:          c,
 		ctx:        ctx,
@@ -59,7 +59,7 @@ func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byt
 }
 
 type netConn struct {
-	c          ConnectionWrapper
+	c          ClientHandler
 	outEvt     *signals.Signal[[]byte]
 	inEvt      *signals.Signal[[]byte]
 	terminate  *signals.Signal[string]

@@ -13,21 +13,42 @@
           "program": "${workspaceFolder}/cmd/server/server.go"
         },
         {
-          "name": "Launch Host",
+          "name": "Launch WebSocket Host",
           "type": "go",
           "request": "launch",
           "mode": "debug",
           "cwd": "${workspaceFolder}",
-          "program": "${workspaceFolder}/cmd/client/client.go",
+          "program": "${workspaceFolder}/cmd/client/websocket/client.go",
           "console": "integratedTerminal"
         },
         {
-          "name": "Launch Join",
+          "name": "Launch WebSocket Join",
           "type": "go",
           "request": "launch",
           "mode": "debug",
           "cwd": "${workspaceFolder}",
-          "program": "${workspaceFolder}/cmd/client/client.go",
+          "program": "${workspaceFolder}/cmd/client/websocket/client.go",
+          "console": "integratedTerminal",
+          "args": [
+            "-join"
+          ]
+        },
+        {
+          "name": "Launch UDP Host",
+          "type": "go",
+          "request": "launch",
+          "mode": "debug",
+          "cwd": "${workspaceFolder}",
+          "program": "${workspaceFolder}/cmd/client/udp/client.go",
+          "console": "integratedTerminal"
+        },
+        {
+          "name": "Launch UDP Join",
+          "type": "go",
+          "request": "launch",
+          "mode": "debug",
+          "cwd": "${workspaceFolder}",
+          "program": "${workspaceFolder}/cmd/client/udp/client.go",
           "console": "integratedTerminal",
           "args": [
             "-join"

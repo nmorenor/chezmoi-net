@@ -21,8 +21,6 @@ import (
 
 	"github.com/nmorenor/chezmoi-net/hub"
 	"github.com/nmorenor/chezmoi-net/jsonrpc"
-
-	"nhooyr.io/websocket"
 )
 
 const (
@@ -33,25 +31,6 @@ const (
 
 func ptr[T any](t T) *T {
 	return &t
-}
-
-type ClientWSWrapper struct {
-	Conn    *websocket.Conn
-	Context context.Context
-}
-
-func (c ClientWSWrapper) Close() error {
-	return c.Conn.Close(websocket.StatusNormalClosure, "")
-}
-
-func (c ClientWSWrapper) Write(p []byte) error {
-	ctx, function := context.WithTimeout(c.Context, 5*time.Second)
-	defer function()
-	err := c.Conn.Write(ctx, websocket.MessageBinary, p)
-	if err != nil {
-		log.Println(err)
-	}
-	return err
 }
 
 type SessionChangeEvent struct {
@@ -65,7 +44,7 @@ type Client struct {
 	Session                 *string
 	Host                    bool
 	OnSessionChange         func(event SessionChangeEvent)
-	ws                      *cnet.Socket
+	ws                      cnet.ISocket
 	netCon                  *net.Conn
 	incommingCon            *net.Conn
 	hubConn                 *net.Conn
@@ -86,20 +65,20 @@ type Client struct {
 	inconns                 map[string]*net.Conn
 	Services                map[string]*rpc.Client
 	sessionChanged          *signals.Signal[SessionChangeEvent]
-	pingTimer               *time.Timer
+	pingTicker              *time.Ticker
 	outgoingDispatcher      *artifex.Dispatcher
 	incommingDispatcher     *artifex.Dispatcher
 	rpcServer               *rpc.Server
-	wsWrapper               *ClientWSWrapper
+	wsWrapper               cnet.ClientHandler
 }
 
 var IncommingMessage = signals.New[[]byte]()
 
-func NewClient(socket cnet.Socket) *Client {
+func NewClient(socket cnet.ISocket) *Client {
 	wsClient := Client{
 		ts:                  int(time.Now().UnixMilli()),
 		Id:                  nil,
-		ws:                  &socket,
+		ws:                  socket,
 		netCon:              nil,
 		Interrupt:           make(chan int),
 		ready:               make(chan bool),
@@ -117,16 +96,16 @@ func NewClient(socket cnet.Socket) *Client {
 		Services:            make(map[string]*rpc.Client),
 		sessionChanged:      ptr(signals.New[SessionChangeEvent]()),
 		terminate:           ptr(signals.New[string]()),
-		pingTimer:           time.NewTimer(30 * time.Second),
+		pingTicker:          time.NewTicker(30 * time.Second),
 		outgoingDispatcher:  artifex.NewDispatcher(10, 100),
 		incommingDispatcher: artifex.NewDispatcher(10, 100),
 		rpcServer:           rpc.NewServer(),
 	}
-	wsClient.ws.OnConnected = wsClient.OnConnected
-	wsClient.ws.OnConnectError = wsClient.OnConnectError
-	wsClient.ws.OnDisconnected = wsClient.OnDisconnected
-	wsClient.ws.OnBinaryMessage = wsClient.OnBinaryMessage
-	wsClient.ws.OnTextMessage = wsClient.OnTextMessage
+	wsClient.ws.SocketHandler().OnConnected = wsClient.OnConnected
+	wsClient.ws.SocketHandler().OnConnectError = wsClient.OnConnectError
+	wsClient.ws.SocketHandler().OnDisconnected = wsClient.OnDisconnected
+	wsClient.ws.SocketHandler().OnBinaryMessage = wsClient.OnBinaryMessage
+	wsClient.ws.SocketHandler().OnTextMessage = wsClient.OnTextMessage
 	wsClient.mainEvents["SessionManager"] = ptr(signals.New[[]byte]())
 	wsClient.mainEvents["Client"] = ptr(signals.New[[]byte]())
 	wsClient.mainEvents["Hub"] = ptr(signals.New[[]byte]())
@@ -136,16 +115,17 @@ func NewClient(socket cnet.Socket) *Client {
 	return &wsClient
 }
 
-func (client *Client) OnConnectError(err error, socket cnet.Socket) {
+func (client *Client) OnConnectError(err error, socket interface{}) {
 	log.Fatal("Received connect error - ", err)
 	client.clean()
 }
 
-func (client *Client) OnConnected(socket cnet.Socket) {
-	client.wsWrapper = &ClientWSWrapper{Conn: socket.WebSocketConn, Context: socket.Context}
-	netConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["SessionManager"], nil, client.terminate, *client.wsWrapper)  // outgoing
-	hubnetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Hub"], nil, client.terminate, *client.wsWrapper)          // outgoing
-	incommingNetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Client"], nil, client.terminate, *client.wsWrapper) // incomming
+func (client *Client) OnConnected(sock interface{}) {
+	socket := sock.(cnet.ISocket)
+	client.wsWrapper = socket.ClientHandler()
+	netConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["SessionManager"], nil, client.terminate, client.wsWrapper)  // outgoing
+	hubnetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Hub"], nil, client.terminate, client.wsWrapper)          // outgoing
+	incommingNetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Client"], nil, client.terminate, client.wsWrapper) // incomming
 	client.netCon = &netConn
 	client.incommingCon = &incommingNetConn
 	client.hubConn = &hubnetConn
@@ -155,15 +135,7 @@ func (client *Client) OnConnected(socket cnet.Socket) {
 		}
 	}, "sessionChanged")
 	// ping
-	go func(client *Client, timer *time.Timer) {
-		<-timer.C
-		if !client.ws.IsConnected {
-			return
-		}
-		client.outmutex.Lock()
-		defer client.outmutex.Unlock()
-		client.wsWrapper.Write([]byte("hello"))
-	}(client, client.pingTimer)
+	client.setupPing()
 	go client.rpcServer.ServeCodec(jsonrpc.NewServerCodec(*client.incommingCon))
 
 	// wait for server to send client id
@@ -176,19 +148,33 @@ func (client *Client) OnConnected(socket cnet.Socket) {
 
 }
 
-func (client *Client) OnDisconnected(err error, socket cnet.Socket) {
+func (client *Client) setupPing() {
+	go func(client *Client, ticker *time.Ticker) {
+		for {
+			select {
+			case <-ticker.C:
+				if !client.ws.IsConnected() {
+					return
+				}
+				client.wsWrapper.Write([]byte("hello"))
+			}
+		}
+	}(client, client.pingTicker)
+}
+
+func (client *Client) OnDisconnected(err error, socket interface{}) {
 	log.Println("Disconnected from server ")
 	client.clean()
 	client.Interrupt <- 1
 }
 
-func (client *Client) OnTextMessage(message string, socket cnet.Socket) {
+func (client *Client) OnTextMessage(message string, socket interface{}) {
 	data := make(map[string]*string)
 	json.Unmarshal([]byte(message), &data)
 	// log.Println("Received message - " + message)
 }
 
-func (client *Client) OnBinaryMessage(data []byte, socket cnet.Socket) {
+func (client *Client) OnBinaryMessage(data []byte, socket interface{}) {
 	channel := client.getChannelFromMessage(data)
 	if channel != nil && client.events[*channel] != nil {
 		evt := *client.events[*channel]
@@ -253,7 +239,7 @@ func (client *Client) clean() {
 		(*client.terminate).Emit(client.ctx, cnet.KILL)
 		(*client.terminate).RemoveListener(cnet.KILL)
 	}
-	client.pingTimer.Stop()
+	client.pingTicker.Stop()
 	for outevt := range client.outEvents {
 		(*client.outEvents[outevt]).RemoveListener(outevt)
 	}

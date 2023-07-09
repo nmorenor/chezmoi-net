@@ -97,7 +97,7 @@ func (sessionManager *SessionManager) CloseSession(targetSession string) {
 			}
 			var status string
 			next.rpcClient.Call("Client.SessionClosed", &ClosedMessage{Session: *next.Session}, &status)
-			next.Socket.Conn.Close()
+			next.Socket.Close()
 		}
 	}
 }
