@@ -18,7 +18,7 @@ type KcpSocket struct {
 
 type ClientHubUDPWrapper struct {
 	conn     *kcp.UDPSession
-	socket   ISocket
+	socket   KcpSocket
 	LastPing time.Time
 }
 
@@ -28,6 +28,8 @@ func (c ClientHubUDPWrapper) Close() error {
 }
 
 func (c ClientHubUDPWrapper) Write(p []byte) error {
+	c.socket.sendMu.Lock()
+	defer c.socket.sendMu.Unlock()
 	_, err := c.conn.Write(p)
 	if err != nil {
 		c.socket.Close()

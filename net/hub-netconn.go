@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,11 +22,10 @@ type ClientHandler interface {
 	Write(p []byte) error
 }
 
-func NetConn(ctx *context.Context, mutex *sync.Mutex, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c ClientHandler) net.Conn {
+func NetConn(ctx *context.Context, event signals.Signal[[]byte], outEvent *signals.Signal[[]byte], terminateSignal *signals.Signal[string], c ClientHandler) net.Conn {
 	nc := &netConn{
 		c:          c,
 		ctx:        ctx,
-		mutex:      mutex,
 		outEvt:     outEvent,
 		terminate:  terminateSignal,
 		terminated: false,
@@ -64,7 +62,6 @@ type netConn struct {
 	inEvt      *signals.Signal[[]byte]
 	terminate  *signals.Signal[string]
 	ctx        *context.Context
-	mutex      *sync.Mutex
 	terminated bool
 	Incomming  chan []byte
 	cleanKey   string
@@ -85,16 +82,12 @@ func (c *netConn) Close() error {
 	if c.c == nil {
 		return nil
 	}
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
 	return c.c.Close()
 }
 
 func (c *netConn) Write(p []byte) (int, error) {
 
 	if c.c != nil {
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
 		err := c.c.Write(p)
 		if err != nil {
 			return 0, err

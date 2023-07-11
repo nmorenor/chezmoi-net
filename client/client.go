@@ -11,7 +11,6 @@ import (
 	"net/rpc"
 	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,7 +59,6 @@ type Client struct {
 	OnConnect               func()
 	sessionManagerRpcClient *rpc.Client
 	hubRpcClient            *rpc.Client
-	outmutex                *sync.Mutex
 	conns                   map[string]*net.Conn
 	inconns                 map[string]*net.Conn
 	Services                map[string]*rpc.Client
@@ -90,7 +88,6 @@ func NewClient(socket cnet.ISocket) *Client {
 		servicesInEvents:    make(map[string]*signals.Signal[[]byte]),
 		servicesOutEvents:   make(map[string]*signals.Signal[[]byte]),
 		outEvents:           make(map[string]*signals.Signal[[]byte]),
-		outmutex:            &sync.Mutex{},
 		conns:               make(map[string]*net.Conn),
 		inconns:             make(map[string]*net.Conn),
 		Services:            make(map[string]*rpc.Client),
@@ -123,9 +120,9 @@ func (client *Client) OnConnectError(err error, socket interface{}) {
 func (client *Client) OnConnected(sock interface{}) {
 	socket := sock.(cnet.ISocket)
 	client.wsWrapper = socket.ClientHandler()
-	netConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["SessionManager"], nil, client.terminate, client.wsWrapper)  // outgoing
-	hubnetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Hub"], nil, client.terminate, client.wsWrapper)          // outgoing
-	incommingNetConn := cnet.NetConn(&client.ctx, client.outmutex, *client.mainEvents["Client"], nil, client.terminate, client.wsWrapper) // incomming
+	netConn := cnet.NetConn(&client.ctx, *client.mainEvents["SessionManager"], nil, client.terminate, client.wsWrapper)  // outgoing
+	hubnetConn := cnet.NetConn(&client.ctx, *client.mainEvents["Hub"], nil, client.terminate, client.wsWrapper)          // outgoing
+	incommingNetConn := cnet.NetConn(&client.ctx, *client.mainEvents["Client"], nil, client.terminate, client.wsWrapper) // incomming
 	client.netCon = &netConn
 	client.incommingCon = &incommingNetConn
 	client.hubConn = &hubnetConn
@@ -394,8 +391,8 @@ func RegisterService[T any](rcvr *T, client *Client) {
 	client.outEvents[sname] = ptr(signals.New[[]byte]())
 	client.servicesInEvents[sname] = ptr(signals.New[[]byte]())
 	client.servicesOutEvents[sname] = ptr(signals.New[[]byte]())
-	conn := cnet.NetConn(&client.ctx, client.outmutex, *client.events[sname], client.outEvents[sname], client.terminate, nil)
-	inconn := cnet.NetConn(&client.ctx, client.outmutex, *client.servicesInEvents[sname], client.servicesOutEvents[sname], client.terminate, nil)
+	conn := cnet.NetConn(&client.ctx, *client.events[sname], client.outEvents[sname], client.terminate, nil)
+	inconn := cnet.NetConn(&client.ctx, *client.servicesInEvents[sname], client.servicesOutEvents[sname], client.terminate, nil)
 	client.conns[sname] = &conn
 	client.inconns[sname] = &inconn
 	client.rpcServer.Register(rcvr)

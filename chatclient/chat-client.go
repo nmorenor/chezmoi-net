@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/nmorenor/chezmoi-net/client"
 )
 
 func NewChatClient(currentClient *client.Client, hostMode bool) *ChatClient {
-	chatClient := &ChatClient{Client: currentClient, participants: make(map[string]*string), inmutex: &sync.Mutex{}, outMutex: &sync.Mutex{}, Host: hostMode}
+	chatClient := &ChatClient{Client: currentClient, participants: make(map[string]*string), Host: hostMode}
 	chatClient.Client.OnConnect = chatClient.onReady
 	chatClient.Client.OnSessionChange = chatClient.onSessionChange
 	return chatClient
@@ -26,8 +25,6 @@ type ChatClient struct {
 	Host         bool
 	Client       *client.Client
 	participants map[string]*string
-	inmutex      *sync.Mutex
-	outMutex     *sync.Mutex
 }
 
 // This will be called when web socket is connected
@@ -65,8 +62,6 @@ func (chatClient *ChatClient) onReady() {
 }
 
 func (chatClient *ChatClient) sendMessage(message string) {
-	chatClient.outMutex.Lock()
-	defer chatClient.outMutex.Unlock()
 	rpcClient := chatClient.Client.GetRpcClientForService(*chatClient)
 
 	// if message starts with [memberName] try to lookup as target
@@ -105,8 +100,6 @@ func (chatClient *ChatClient) findParticipantFromName(target string) *string {
  * Message received from rcp call, RPC methods must follow the signature
  */
 func (chatClient *ChatClient) OnMessage(message *Message, reply *string) error {
-	chatClient.inmutex.Lock()
-	defer chatClient.inmutex.Unlock()
 	if chatClient.participants[message.Source] != nil {
 		from := chatClient.participants[message.Source]
 		fmt.Printf("%s: %s\n", *from, message.Message)
@@ -116,8 +109,6 @@ func (chatClient *ChatClient) OnMessage(message *Message, reply *string) error {
 }
 
 func (chatClient *ChatClient) onSessionChange(event client.SessionChangeEvent) {
-	chatClient.inmutex.Lock()
-	defer chatClient.inmutex.Unlock()
 	response := chatClient.Client.SessionMembers()
 	oldParticipants := chatClient.participants
 	chatClient.participants = response.Members

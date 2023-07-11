@@ -37,7 +37,6 @@ type Client struct {
 	Session *string
 	Id      string
 	Name    *string
-	mutex   *sync.Mutex
 
 	Socket      ISocket
 	Events      map[string]*signals.Signal[[]byte]
@@ -52,13 +51,13 @@ type Client struct {
 
 func (c *Client) startJsonRPC() {
 	// setup communication to client
-	clientCon := cnet.NetConn(c.ctx, c.mutex, *c.Events["Client"], nil, c.terminate, c.wrapper)
+	clientCon := cnet.NetConn(c.ctx, *c.Events["Client"], nil, c.terminate, c.wrapper)
 	c.rpcClient = jsonrpc.NewClient(clientCon) // jsonrpc2 client
 	c.Hub.Register <- c
 
 	// hub has registered the client
-	sessionManagerConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["SessionManager"], nil, c.terminate, c.wrapper)
-	hubConn := cnet.NetConn(c.ctx, c.mutex, *c.Events["Hub"], nil, c.terminate, c.wrapper)
+	sessionManagerConn := cnet.NetConn(c.ctx, *c.Events["SessionManager"], nil, c.terminate, c.wrapper)
+	hubConn := cnet.NetConn(c.ctx, *c.Events["Hub"], nil, c.terminate, c.wrapper)
 	go jsonrpc.ServeConn(sessionManagerConn) // jsonrpc2 server
 	go jsonrpc.ServeConn(hubConn)            // jsonrpc2 server
 	c.setupPing()
@@ -123,8 +122,7 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
-	sendMu := new(sync.Mutex)
-	socket := NewWebSocket(sendMu, *conn)
+	socket := NewWebSocket(&sync.Mutex{}, *conn)
 	ctx := context.Background()
 	clientId := uuid.Must(uuid.NewRandom()).String()
 	client := &Client{
@@ -135,7 +133,6 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		Id:          clientId,
 		Ready:       false,
 		ctx:         &ctx,
-		mutex:       sendMu,
 		wrapper:     ClientHubWSWrapper{Conn: conn},
 		pingTicker:  time.NewTicker(30 * time.Second),
 		isConnected: true,
@@ -144,14 +141,10 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	client.Events["Hub"] = ptr(signals.New[[]byte]())
 	client.Events["Client"] = ptr(signals.New[[]byte]())
 	client.Socket.SocketHandler().OnDisconnected = func(err error, socket interface{}) {
-		sendMu.Lock()
-		defer sendMu.Unlock()
 		client.isConnected = false
 		client.Hub.Unregister <- client
 	}
 	client.Socket.SocketHandler().OnPingReceived = func(data string, socket interface{}) {
-		sendMu.Lock()
-		defer sendMu.Unlock()
 		socket.(*Socket).SendBinary(websocket.PongMessage, []byte("nice"))
 	}
 	client.Socket.SocketHandler().OnTextMessage = func(message string, socket interface{}) {
@@ -161,8 +154,6 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	client.Socket.SocketHandler().OnBinaryMessage = func(data []byte, socket interface{}) {
 		mdata := make(map[string]*string)
 		if string(data) == "hello" {
-			sendMu.Lock()
-			defer sendMu.Unlock()
 			socket.(*Socket).SendBinary(websocket.PongMessage, []byte("nice"))
 			return
 		}
@@ -200,8 +191,7 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 }
 
 func ServeUDP(hub *Hub, conn *kcp.UDPSession) {
-	sendMu := new(sync.Mutex)
-	socket := NewKcpSocket(sendMu, conn)
+	socket := NewKcpSocket(&sync.Mutex{}, conn)
 	ctx := context.Background()
 	clientId := uuid.Must(uuid.NewRandom()).String()
 	client := &Client{
@@ -212,18 +202,15 @@ func ServeUDP(hub *Hub, conn *kcp.UDPSession) {
 		Id:          clientId,
 		Ready:       false,
 		ctx:         &ctx,
-		mutex:       sendMu,
 		pingTicker:  time.NewTicker(30 * time.Second),
 		isConnected: true,
 	}
-	wrapper := &ClientHubUDPWrapper{conn: conn, LastPing: time.Now(), socket: socket}
+	wrapper := &ClientHubUDPWrapper{conn: conn, LastPing: time.Now(), socket: socket.(KcpSocket)}
 	client.wrapper = wrapper
 	client.Events["SessionManager"] = ptr(signals.New[[]byte]())
 	client.Events["Hub"] = ptr(signals.New[[]byte]())
 	client.Events["Client"] = ptr(signals.New[[]byte]())
 	client.Socket.SocketHandler().OnDisconnected = func(err error, socket interface{}) {
-		sendMu.Lock()
-		defer sendMu.Unlock()
 		client.isConnected = false
 		client.Hub.Unregister <- client
 		wrapper.conn = nil

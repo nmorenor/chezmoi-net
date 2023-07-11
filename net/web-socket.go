@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"sync"
 	"time"
 
 	logging "github.com/sacOO7/go-logger"
@@ -62,6 +63,8 @@ type Socket struct {
 	isConnected       bool
 	Timeout           time.Duration
 	clientWrapper     *ClientWSWrapper
+	sendMu            *sync.Mutex // Prevent "concurrent write on connection"
+	receiveMu         *sync.Mutex
 }
 
 type ConnectionOptions struct {
@@ -78,13 +81,18 @@ type ReconnectionOptions struct {
 type ClientWSWrapper struct {
 	Conn    *websocket.Conn
 	Context context.Context
+	mutex   *sync.Mutex
 }
 
 func (c ClientWSWrapper) Close() error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	return c.Conn.Close(websocket.StatusNormalClosure, "")
 }
 
 func (c ClientWSWrapper) Write(p []byte) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	ctx, function := context.WithTimeout(c.Context, 5*time.Second)
 	defer function()
 	err := c.Conn.Write(ctx, websocket.MessageBinary, p)
@@ -105,7 +113,10 @@ func NewWebSocket(url string) ISocket {
 		Timeout:       0,
 		handler:       &SocketHandler{},
 		clientWrapper: &ClientWSWrapper{},
+		sendMu:        &sync.Mutex{},
+		receiveMu:     &sync.Mutex{},
 	}
+	socket.clientWrapper.mutex = socket.sendMu
 	return socket
 }
 
@@ -167,6 +178,8 @@ func (socket Socket) dialWebsocket(url string, tlsConfig *tls.Config) (*websocke
 }
 
 func (socket Socket) SendBinary(data []byte) {
+	socket.sendMu.Lock()
+	defer socket.sendMu.Unlock()
 	err := socket.WebSocketConn.Write(context.Background(), websocket.MessageBinary, data)
 	if err != nil {
 		logger.Error.Println("write:", err)

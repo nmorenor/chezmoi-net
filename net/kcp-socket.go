@@ -2,6 +2,7 @@ package net
 
 import (
 	"crypto/sha1"
+	"sync"
 	"time"
 
 	"github.com/xtaci/kcp-go/v5"
@@ -30,6 +31,8 @@ type KCPSocket struct {
 	key           string
 	Timeout       time.Duration
 	clientWrapper *KCPSocketHandler
+	sendMu        *sync.Mutex // Prevent "concurrent write on connection"
+	receiveMu     *sync.Mutex
 }
 
 func NewKCPSocket(address string, key string) ISocket {
@@ -39,6 +42,8 @@ func NewKCPSocket(address string, key string) ISocket {
 		Timeout:     0,
 		isConnected: false,
 		key:         key,
+		sendMu:      &sync.Mutex{},
+		receiveMu:   &sync.Mutex{},
 	}
 	socket.clientWrapper = &KCPSocketHandler{socket}
 	return socket
@@ -61,8 +66,6 @@ func (socket *KCPSocket) Connect() {
 		socket.conn = sess
 
 		data := time.Now().String()
-		logger.Info.Println("sent:", data)
-
 		_, err = sess.Write([]byte(data))
 		if err != nil {
 			logger.Error.Println("Error sending data:", err)
@@ -93,6 +96,8 @@ func (socket *KCPSocket) Close() {
 }
 
 func (socket *KCPSocket) SendBinary(data []byte) {
+	socket.sendMu.Lock()
+	defer socket.sendMu.Unlock()
 	_, err := socket.conn.Write(data)
 	if err != nil {
 		if socket.handler.OnDisconnected != nil {
