@@ -172,6 +172,9 @@ func (client *Client) OnTextMessage(message string, socket interface{}) {
 }
 
 func (client *Client) OnBinaryMessage(data []byte, socket interface{}) {
+	if string(data) == "nice" {
+		return
+	}
 	channel := client.getChannelFromMessage(data)
 	if channel != nil && client.events[*channel] != nil {
 		evt := *client.events[*channel]

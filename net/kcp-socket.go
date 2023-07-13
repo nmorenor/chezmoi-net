@@ -1,7 +1,11 @@
 package net
 
 import (
+	"bufio"
 	"crypto/sha1"
+	"encoding/binary"
+	"io"
+	"net"
 	"sync"
 	"time"
 
@@ -64,13 +68,10 @@ func (socket *KCPSocket) Connect() {
 	// dial to the echo server
 	if sess, err := kcp.DialWithOptions(socket.Address, block, 10, 3); err == nil {
 		socket.conn = sess
-
-		data := time.Now().String()
-		_, err = sess.Write([]byte(data))
+		err := SendUDP(socket.conn, []byte("hello"))
 		if err != nil {
 			logger.Error.Println("Error sending data:", err)
 		}
-
 		logger.Info.Println("Connected to server")
 
 		if socket.handler.OnConnected != nil {
@@ -88,6 +89,9 @@ func (socket *KCPSocket) Connect() {
 }
 
 func (socket *KCPSocket) Close() {
+	if !socket.isConnected {
+		return
+	}
 	socket.conn.Close()
 	if socket.handler.OnDisconnected != nil {
 		socket.isConnected = false
@@ -98,7 +102,7 @@ func (socket *KCPSocket) Close() {
 func (socket *KCPSocket) SendBinary(data []byte) {
 	socket.sendMu.Lock()
 	defer socket.sendMu.Unlock()
-	_, err := socket.conn.Write(data)
+	err := SendUDP(socket.conn, data)
 	if err != nil {
 		if socket.handler.OnDisconnected != nil {
 			socket.isConnected = false
@@ -114,8 +118,7 @@ func (socket *KCPSocket) IsConnected() bool {
 
 func (socket *KCPSocket) eventLoop() {
 	for {
-		data := make([]byte, 150000)
-		n, err := socket.conn.Read(data)
+		data, err := ReceiveUDP(socket.conn)
 		if err != nil {
 			if socket.handler.OnDisconnected != nil {
 				socket.isConnected = false
@@ -124,7 +127,32 @@ func (socket *KCPSocket) eventLoop() {
 			return
 		}
 		if socket.handler.OnBinaryMessage != nil {
-			socket.handler.OnBinaryMessage(data[:n], socket)
+			socket.handler.OnBinaryMessage(data, socket)
 		}
 	}
+}
+
+func ReceiveUDP(conn net.Conn) ([]byte, error) {
+	r := bufio.NewReader(conn)
+	var length uint32
+	if err := binary.Read(r, binary.BigEndian, &length); err != nil {
+		return nil, err
+	}
+	message := make([]byte, length)
+	if _, err := io.ReadFull(r, message); err != nil {
+		return nil, err
+	}
+	return message, nil
+}
+
+func SendUDP(conn net.Conn, message []byte) error {
+	w := bufio.NewWriter(conn)
+	length := uint32(len(message))
+	if err := binary.Write(w, binary.BigEndian, length); err != nil {
+		return err
+	}
+	if _, err := w.Write(message); err != nil {
+		return err
+	}
+	return w.Flush()
 }

@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nmorenor/chezmoi-net/net"
 	"github.com/xtaci/kcp-go/v5"
 )
 
@@ -30,7 +31,7 @@ func (c ClientHubUDPWrapper) Close() error {
 func (c ClientHubUDPWrapper) Write(p []byte) error {
 	c.socket.sendMu.Lock()
 	defer c.socket.sendMu.Unlock()
-	_, err := c.conn.Write(p)
+	err := net.SendUDP(c.conn, p)
 	if err != nil {
 		c.socket.Close()
 		return err
@@ -63,6 +64,9 @@ func (socket KcpSocket) SocketHandler() *SocketHandler {
 }
 
 func (socket KcpSocket) Close() {
+	if !socket.isConnected {
+		return
+	}
 	socket.conn.Close()
 	if socket.handler.OnDisconnected != nil {
 		socket.isConnected = false
@@ -73,7 +77,7 @@ func (socket KcpSocket) Close() {
 func (socket KcpSocket) SendBinary(messageType int, data []byte) {
 	socket.sendMu.Lock()
 	defer socket.sendMu.Unlock()
-	_, err := socket.conn.Write(data)
+	err := net.SendUDP(socket.conn, data)
 	if err != nil {
 		if socket.handler.OnDisconnected != nil {
 			socket.isConnected = false
@@ -85,10 +89,10 @@ func (socket KcpSocket) SendBinary(messageType int, data []byte) {
 
 func (socket KcpSocket) Connect() {
 	go func() {
+
 		for {
 			socket.receiveMu.Lock()
-			data := make([]byte, 150000)
-			n, err := socket.conn.Read(data)
+			data, err := net.ReceiveUDP(socket.conn)
 			socket.receiveMu.Unlock()
 			if err != nil {
 				if socket.handler.OnDisconnected != nil {
@@ -98,7 +102,7 @@ func (socket KcpSocket) Connect() {
 				return
 			}
 			if socket.handler.OnBinaryMessage != nil {
-				socket.handler.OnBinaryMessage(data[:n], socket)
+				socket.handler.OnBinaryMessage(data, socket)
 			}
 		}
 	}()

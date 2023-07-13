@@ -255,6 +255,8 @@ func ServeUDP(hub *Hub, conn *kcp.UDPSession) {
 			} else {
 				log.Println("2: Channel not found: " + channel)
 			}
+		} else {
+			log.Println("3: Channel not found: " + string(data))
 		}
 	}
 	client.Socket.Connect()
