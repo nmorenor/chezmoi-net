@@ -65,6 +65,7 @@ type Socket struct {
 	clientWrapper     *ClientWSWrapper
 	sendMu            *sync.Mutex // Prevent "concurrent write on connection"
 	receiveMu         *sync.Mutex
+	headers           *map[string]string
 }
 
 type ConnectionOptions struct {
@@ -102,7 +103,7 @@ func (c ClientWSWrapper) Write(p []byte) error {
 	return err
 }
 
-func NewWebSocket(url string) ISocket {
+func NewWebSocket(url string, headers *map[string]string) ISocket {
 	socket := Socket{
 		Url:           url,
 		RequestHeader: http.Header{},
@@ -115,6 +116,7 @@ func NewWebSocket(url string) ISocket {
 		clientWrapper: &ClientWSWrapper{},
 		sendMu:        &sync.Mutex{},
 		receiveMu:     &sync.Mutex{},
+		headers:       headers,
 	}
 	socket.clientWrapper.mutex = socket.sendMu
 	return socket
@@ -168,6 +170,9 @@ func (socket Socket) Connect() {
 
 func (socket Socket) dialWebsocket(url string, tlsConfig *tls.Config) (*websocket.Conn, context.Context, error) {
 	ctx := context.Background()
+	if socket.headers != nil {
+		ctx = context.WithValue(ctx, connectionHeadersContextKey, socket.headers)
+	}
 
 	wsConn, err := dialWs(ctx, url, tlsConfig)
 	if err != nil {

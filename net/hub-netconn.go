@@ -17,6 +17,10 @@ const (
 	KILL = "kill"
 )
 
+type headersKey string
+
+const connectionHeadersContextKey headersKey = "connectionHeaders"
+
 type ClientHandler interface {
 	Close() error
 	Write(p []byte) error

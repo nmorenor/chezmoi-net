@@ -20,7 +20,7 @@ import (
 func app(hostMode bool) {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
-	currentClient := client.NewClient(net.NewWebSocket("ws://localhost:8080/ws"))
+	currentClient := client.NewClient(net.NewWebSocket("ws://localhost:8080/ws", nil))
 	hostClient := chatclient.NewChatClient(currentClient, hostMode)
 	if hostClient.Host {
 		fmt.Println("Starting as Host")
