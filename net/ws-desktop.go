@@ -6,6 +6,7 @@ package net
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net/http"
 
 	"nhooyr.io/websocket"
@@ -28,6 +29,10 @@ func dialWs(ctx context.Context, url string, tlsConfig *tls.Config) (*websocket.
 			},
 		},
 	})
+	if err != nil {
+		fmt.Println("Error while connecting to server ", err)
+		return nil, err
+	}
 	wsConn.SetReadLimit(150000)
 	return wsConn, err
 }
